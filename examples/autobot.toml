@@ -1,0 +1,115 @@
+[app]
+name = "autobot"
+mode = "supervised"
+config_version = 1
+timezone = "local"
+
+[paths]
+state_dir = "~/.local/state/autobot"
+prompt_override_dir = "~/.config/autobot/prompts"
+env_file = "~/.config/autobot/.env"
+
+[server]
+host = "127.0.0.1"
+port = 9090
+webhook_path = "/hooks/github"
+health_path = "/healthz"
+readiness_path = "/readyz"
+
+[queue]
+backend = "redis"
+url = { env = "AUTOBOT_QUEUE_URL", default = "redis://127.0.0.1:6379/0" }
+ready_stream = "autobot:ready"
+scheduled_zset = "autobot:scheduled"
+
+[database]
+driver = "sqlite"
+path = "~/.local/state/autobot/autobot.db"
+
+[providers.github]
+enabled = true
+webhook_secret = { env = "AUTOBOT_GITHUB_WEBHOOK_SECRET" }
+app_id = { env = "AUTOBOT_GITHUB_APP_ID" }
+private_key = { file = "~/.config/autobot/github-app.private-key.pem" }
+
+[events.github]
+enabled = true
+include = [
+  "ping",
+  "pull_request",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "issue_comment",
+  "check_run",
+  "check_suite",
+  "workflow_run",
+]
+exclude_actions = []
+
+[defaults.throttle]
+quiet_window_seconds = 900
+max_open_child_prs_per_parent_pr = 1
+coalesce_by = "parent_pr"
+
+[defaults.branching]
+child_branch_template = "{{app_name:-autobot}}/{{pr_number:-pr-unknown}}-fix"
+child_pr_title_template = "[{{app_name:-autobot}}] {{handler_name}} for PR #{{pr_number}}"
+target = "parent_pr_head_branch"
+
+[defaults.ai]
+provider = "copilot"
+model = "default"
+max_prompt_tokens = 120000
+max_output_tokens = 16000
+max_total_tokens_per_job = 180000
+context_truncation = "oldest_logs_first"
+
+[ai.providers.copilot]
+type = "command"
+command = ["copilot", "-p", "-", "--allow-all-tools"]
+
+[defaults.quality]
+run_tests_before_commit = false
+run_ai_review_before_commit = false
+run_coderabbit_before_commit = false
+require_tests_pass = false
+require_ai_review_pass = false
+require_coderabbit_pass = false
+
+[[handlers]]
+id = "github-pr-review-comment"
+provider = "github"
+event = "pull_request_review_comment"
+actions = ["created"]
+enabled = true
+run_type = "ai_prompt"
+prompt = "github_pr_review_comment"
+throttle_key = "parent_pr"
+
+[[handlers]]
+id = "github-check-failure"
+provider = "github"
+event = "workflow_run"
+actions = ["completed"]
+conclusions = ["failure", "timed_out"]
+enabled = true
+run_type = "ai_prompt"
+prompt = "github_check_failure"
+throttle_key = "parent_pr"
+
+[[repos]]
+key = "itzjustalan/autobot"
+enabled = true
+provider = "github"
+local_path = "/root/apps/autobot"
+
+[repos.ai]
+provider = "copilot"
+
+[repos.quality]
+run_tests_before_commit = false
+run_ai_review_before_commit = false
+run_coderabbit_before_commit = false
+
+[repos.branching]
+child_branch_template = "{{app_name:-autobot}}/{{pr_number:-pr-unknown}}-fix"

@@ -1,0 +1,17 @@
+[Unit]
+Description=autobot webhook automation daemon
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/autobot serve --config /etc/autobot/autobot.toml
+Restart=always
+RestartSec=5
+EnvironmentFile=-/etc/autobot/autobot.env
+WorkingDirectory=/var/lib/autobot
+StateDirectory=autobot
+LogsDirectory=autobot
+
+[Install]
+WantedBy=multi-user.target

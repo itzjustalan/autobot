@@ -1,0 +1,22 @@
+[project]
+name = "autobot"
+version = "0.1.0"
+description = "Configurable webhook automation daemon for AI-assisted code maintenance"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyJWT[crypto]>=2.8",
+  "redis>=5.0",
+  "requests>=2.31",
+]
+
+[project.scripts]
+autobot = "autobot.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
