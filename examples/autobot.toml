@@ -32,6 +32,12 @@ webhook_secret = { env = "AUTOBOT_GITHUB_WEBHOOK_SECRET" }
 app_id = { env = "AUTOBOT_GITHUB_APP_ID" }
 private_key = { file = "~/.config/autobot/github-app.private-key.pem" }
 
+[providers.github.ip_allowlist_monitor]
+enabled = true
+meta_url = "https://api.github.com/meta"
+check_interval_seconds = 86400
+warn_on_change = true
+
 [events.github]
 enabled = true
 include = [

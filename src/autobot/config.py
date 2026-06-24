@@ -130,6 +130,16 @@ def default_config() -> dict[str, Any]:
             "scheduled_zset": "autobot:scheduled",
         },
         "database": {"driver": "sqlite", "path": "~/.local/state/autobot/autobot.db"},
+        "providers": {
+            "github": {
+                "ip_allowlist_monitor": {
+                    "enabled": True,
+                    "meta_url": "https://api.github.com/meta",
+                    "check_interval_seconds": 86400,
+                    "warn_on_change": True,
+                }
+            }
+        },
         "defaults": {
             "throttle": {
                 "quiet_window_seconds": 900,

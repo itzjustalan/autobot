@@ -119,6 +119,29 @@ CREATE TABLE IF NOT EXISTS artifacts (
   metadata_json TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS provider_ip_ranges (
+  provider TEXT NOT NULL,
+  range_type TEXT NOT NULL,
+  ranges_json TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  etag TEXT,
+  hash TEXT NOT NULL,
+  checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(provider, range_type)
+);
+
+CREATE TABLE IF NOT EXISTS provider_ip_range_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  range_type TEXT NOT NULL,
+  added_json TEXT NOT NULL,
+  removed_json TEXT NOT NULL,
+  previous_hash TEXT,
+  current_hash TEXT NOT NULL,
+  detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  acknowledged_at TEXT
+);
 """
 
 
@@ -517,3 +540,113 @@ class StateStore:
                 """
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def get_provider_ip_ranges(
+        self,
+        *,
+        provider: str,
+        range_type: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT provider, range_type, ranges_json, source_url, etag, hash, checked_at
+                FROM provider_ip_ranges
+                WHERE provider = ? AND range_type = ?
+                """,
+                (provider, range_type),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["ranges"] = json.loads(str(result.pop("ranges_json")))
+            return result
+
+    def upsert_provider_ip_ranges(
+        self,
+        *,
+        provider: str,
+        range_type: str,
+        ranges: list[str],
+        source_url: str,
+        current_hash: str,
+        etag: str | None = None,
+    ) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO provider_ip_ranges (
+                  provider, range_type, ranges_json, source_url, etag, hash
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, range_type)
+                DO UPDATE SET
+                  ranges_json = excluded.ranges_json,
+                  source_url = excluded.source_url,
+                  etag = excluded.etag,
+                  hash = excluded.hash,
+                  checked_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    provider,
+                    range_type,
+                    json.dumps(ranges, sort_keys=True),
+                    source_url,
+                    etag,
+                    current_hash,
+                ),
+            )
+
+    def record_provider_ip_range_change(
+        self,
+        *,
+        provider: str,
+        range_type: str,
+        added: list[str],
+        removed: list[str],
+        previous_hash: str | None,
+        current_hash: str,
+    ) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO provider_ip_range_changes (
+                  provider, range_type, added_json, removed_json,
+                  previous_hash, current_hash
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider,
+                    range_type,
+                    json.dumps(added, sort_keys=True),
+                    json.dumps(removed, sort_keys=True),
+                    previous_hash,
+                    current_hash,
+                ),
+            )
+
+    def latest_provider_ip_range_changes(
+        self,
+        *,
+        provider: str = "github",
+        range_type: str = "hooks",
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, provider, range_type, added_json, removed_json,
+                       previous_hash, current_hash, detected_at, acknowledged_at
+                FROM provider_ip_range_changes
+                WHERE provider = ? AND range_type = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (provider, range_type, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["added"] = json.loads(str(item.pop("added_json")))
+                item["removed"] = json.loads(str(item.pop("removed_json")))
+                result.append(item)
+            return result

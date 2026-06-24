@@ -8,6 +8,7 @@ Type=simple
 ExecStart=/usr/local/bin/autobot serve --config /etc/autobot/autobot.toml
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 EnvironmentFile=-/etc/autobot/autobot.env
 WorkingDirectory=/var/lib/autobot
 StateDirectory=autobot

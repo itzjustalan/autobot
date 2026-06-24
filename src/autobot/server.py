@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 from pathlib import Path
+import threading
 import time
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,7 @@ from uuid import uuid4
 from .config import AppConfig
 from .db.sqlite import StateStore
 from .providers.github import GitHubProvider, GitHubSignatureError, parse_json_body, verify_signature
+from .providers.github_meta import GitHubIPRangeMonitor
 from .queue.redis_queue import QueueError, RedisQuietWindowQueue
 from .queue.recovery import recover_after_crash
 
@@ -32,6 +34,8 @@ class AutobotRuntime:
         self.github = GitHubProvider()
         self.payload_dir = config.payload_dir
         self.payload_dir.mkdir(parents=True, exist_ok=True)
+        self._monitor_stop = threading.Event()
+        self._monitor_thread: threading.Thread | None = None
 
     def ready(self) -> tuple[bool, str]:
         try:
@@ -52,6 +56,38 @@ class AutobotRuntime:
             if handler.get("enabled", True) and handler.get("event") == event_name:
                 return str(handler["id"])
         return "noop"
+
+    def start_ip_range_monitor(self) -> None:
+        settings = (
+            self.config.data.get("providers", {})
+            .get("github", {})
+            .get("ip_allowlist_monitor", {})
+        )
+        if not settings.get("enabled", True):
+            return
+        interval = int(settings.get("check_interval_seconds", 86400))
+        meta_url = str(settings.get("meta_url", "https://api.github.com/meta"))
+        monitor = GitHubIPRangeMonitor(store=self.state, meta_url=meta_url)
+
+        def run() -> None:
+            while not self._monitor_stop.is_set():
+                try:
+                    monitor.check()
+                except Exception as exc:  # noqa: BLE001 - daemon monitor should warn, not crash.
+                    LOG.warning("GitHub webhook IP range check failed: %s", exc)
+                self._monitor_stop.wait(interval)
+
+        self._monitor_thread = threading.Thread(
+            target=run,
+            name="github-ip-range-monitor",
+            daemon=True,
+        )
+        self._monitor_thread.start()
+
+    def stop_ip_range_monitor(self) -> None:
+        self._monitor_stop.set()
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=5)
 
 
 def _headers_dict(handler: BaseHTTPRequestHandler) -> dict[str, str]:
@@ -184,6 +220,7 @@ def serve(config: AppConfig) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     runtime = AutobotRuntime(config)
+    runtime.start_ip_range_monitor()
     handler = type(
         "ConfiguredAutobotRequestHandler",
         (AutobotRequestHandler,),
@@ -198,4 +235,5 @@ def serve(config: AppConfig) -> None:
     except KeyboardInterrupt:
         LOG.info("autobot shutdown requested")
     finally:
+        runtime.stop_ip_range_monitor()
         httpd.server_close()

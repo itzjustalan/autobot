@@ -198,6 +198,25 @@ Allow those ranges to inbound TCP `443` on the VM. Keep TCP `80` reachable if th
 
 GitHub can change these ranges, so refresh your firewall allowlist periodically from `/meta`.
 
+`autobot` can track these ranges for you. Enable the monitor in `autobot.toml`:
+
+```toml
+[providers.github.ip_allowlist_monitor]
+enabled = true
+meta_url = "https://api.github.com/meta"
+check_interval_seconds = 86400
+warn_on_change = true
+```
+
+The monitor stores the latest `hooks` ranges in SQLite. On startup and then periodically, `autobot serve` compares GitHub's live ranges to the stored snapshot. If the ranges change, it logs a warning to systemd/journal and records the added/removed CIDRs in SQLite. It does not update firewall rules automatically.
+
+Manual commands:
+
+```bash
+autobot github-ip-ranges check --config ~/.config/autobot/autobot.toml
+autobot github-ip-ranges status --config ~/.config/autobot/autobot.toml
+```
+
 ### Verify installation
 
 Check the local service:

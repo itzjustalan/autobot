@@ -9,6 +9,7 @@ import sys
 
 from .config import ConfigError, load_config
 from .db.sqlite import StateStore
+from .providers.github_meta import GitHubIPRangeMonitor
 from .queue.redis_queue import RedisQuietWindowQueue
 from .server import serve
 from .stats import print_stats
@@ -25,10 +26,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         config = load_config(args.config)
         config.database_path.parent.mkdir(parents=True, exist_ok=True)
         config.payload_dir.mkdir(parents=True, exist_ok=True)
+        store = StateStore(config.database_path)
+        monitor = GitHubIPRangeMonitor(store=store)
+        ip_status = monitor.status()["snapshot"]
         print(f"config: ok ({config.path})")
         print(f"state_dir: {config.state_dir}")
         print(f"server: {config.server.get('host')}:{config.server.get('port')}")
         print(f"queue: {config.queue.get('backend')} {config.queue_url()}")
+        if ip_status:
+            print(
+                "github_hooks: "
+                f"{len(ip_status['ranges'])} ranges, last_checked={ip_status['checked_at']}"
+            )
+        else:
+            print("github_hooks: no snapshot yet")
         return 0
     except Exception as exc:  # noqa: BLE001 - doctor should surface any failure.
         print(f"doctor: failed: {exc}", file=sys.stderr)
@@ -74,6 +85,33 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_github_ip_ranges_check(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    monitor = GitHubIPRangeMonitor(store=StateStore(config.database_path))
+    result = monitor.check()
+    print(
+        json.dumps(
+            {
+                "changed": result.changed,
+                "initial": result.initial,
+                "range_count": len(result.ranges),
+                "added": result.added,
+                "removed": result.removed,
+                "checked_at": result.checked_at,
+            },
+            sort_keys=True,
+        )
+    )
+    return 1 if result.changed and args.fail_on_change else 0
+
+
+def cmd_github_ip_ranges_status(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    monitor = GitHubIPRangeMonitor(store=StateStore(config.database_path))
+    print(json.dumps(monitor.status(), sort_keys=True, indent=2, default=str))
+    return 0
+
+
 def cmd_placeholder(name: str) -> int:
     print(f"{name}: not implemented yet")
     return 2
@@ -114,6 +152,16 @@ def build_parser() -> argparse.ArgumentParser:
     stats = sub.add_parser("stats", help="Print tracked PR stats")
     _add_config_arg(stats)
     stats.set_defaults(func=cmd_stats)
+
+    ip_ranges = sub.add_parser("github-ip-ranges", help="Monitor GitHub webhook IP ranges")
+    ip_sub = ip_ranges.add_subparsers(dest="ip_command", required=True)
+    ip_check = ip_sub.add_parser("check", help="Fetch /meta hooks ranges and warn on changes")
+    _add_config_arg(ip_check)
+    ip_check.add_argument("--fail-on-change", action="store_true")
+    ip_check.set_defaults(func=cmd_github_ip_ranges_check)
+    ip_status = ip_sub.add_parser("status", help="Show stored GitHub hooks range status")
+    _add_config_arg(ip_status)
+    ip_status.set_defaults(func=cmd_github_ip_ranges_status)
 
     webhook = sub.add_parser("webhook", help="Webhook test helpers")
     webhook_sub = webhook.add_subparsers(dest="provider", required=True)
