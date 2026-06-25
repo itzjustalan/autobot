@@ -52,7 +52,12 @@ def run_job(*, config: AppConfig, store: StateStore, job_id: str) -> WorkflowRes
         return WorkflowResult("blocked", decision.reason)
 
     store.mark_job_status(job_id, "running")
-    context = build_context(config=config, envelope=envelope, handler_id=str(job["handler_id"]))
+    context = build_context(
+        config=config,
+        envelope=envelope,
+        handler_id=str(job["handler_id"]),
+        store=store,
+    )
 
     if envelope.event_name == "pull_request_review_comment" and envelope.is_child_pr:
         result = run_child_pr_followup(config=config, store=store, job_id=job_id, context=context)

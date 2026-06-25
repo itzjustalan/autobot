@@ -28,6 +28,7 @@ class AIResult:
 
 class AIProvider(ABC):
     name: str
+    supports_session_reuse: bool = False
 
     @abstractmethod
     def run(
@@ -38,5 +39,6 @@ class AIProvider(ABC):
         context: dict[str, Any],
         budget: AIBudget,
         tools_policy: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AIResult:
         """Run the provider with a rendered prompt."""

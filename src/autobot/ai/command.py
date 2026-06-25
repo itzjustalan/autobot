@@ -11,11 +11,26 @@ from .base import AIBudget, AIProvider, AIResult
 
 class CommandAIProvider(AIProvider):
     name = "command"
+    supports_session_reuse = True
 
-    def __init__(self, command: list[str], *, model: str | None = None, timeout: int = 3600) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        model: str | None = None,
+        timeout: int = 3600,
+        connect_arg_template: str | None = None,
+    ) -> None:
         self.command = command
         self.model = model
         self.timeout = timeout
+        self.connect_arg_template = connect_arg_template
+
+    def build_command(self, *, session_id: str | None = None) -> list[str]:
+        command = list(self.command)
+        if session_id and self.connect_arg_template:
+            command.append(self.connect_arg_template.replace("{{session_id}}", session_id))
+        return command
 
     def run(
         self,
@@ -25,9 +40,10 @@ class CommandAIProvider(AIProvider):
         context: dict[str, Any],
         budget: AIBudget,
         tools_policy: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AIResult:
         completed = subprocess.run(
-            self.command,
+            self.build_command(session_id=session_id),
             input=prompt,
             text=True,
             cwd=worktree,
@@ -43,5 +59,5 @@ class CommandAIProvider(AIProvider):
             output=output,
             provider=self.name,
             model=self.model,
-            metadata={"returncode": completed.returncode},
+            metadata={"returncode": completed.returncode, "session_id": session_id},
         )

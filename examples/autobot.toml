@@ -16,6 +16,15 @@ webhook_path = "/hooks/github"
 health_path = "/healthz"
 readiness_path = "/readyz"
 
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 9091
+token = { env = "AUTOBOT_WEB_TOKEN", default = "" }
+read_only = true
+enable_actions = false
+open_browser = false
+
 [queue]
 backend = "redis"
 url = { env = "AUTOBOT_QUEUE_URL", default = "redis://127.0.0.1:6379/0" }
@@ -70,9 +79,22 @@ max_output_tokens = 16000
 max_total_tokens_per_job = 180000
 context_truncation = "oldest_logs_first"
 
+[defaults.ai.session_discovery]
+enabled = false
+git_log_limit = 100
+scan_subject = true
+scan_body = true
+heuristics_enabled = false
+patterns = []
+
 [ai.providers.copilot]
 type = "command"
 command = ["copilot", "-p", "-", "--allow-all-tools"]
+
+[ai.providers.copilot.session_reuse]
+enabled = true
+connect_arg_template = "--connect={{session_id}}"
+fallback = "new_session"
 
 [defaults.quality]
 run_tests_before_commit = false
@@ -111,6 +133,15 @@ local_path = "/root/apps/autobot"
 
 [repos.ai]
 provider = "copilot"
+
+[repos.ai.session_discovery]
+enabled = false
+git_log_limit = 50
+heuristics_enabled = false
+patterns = [
+  '(?i)^Copilot-Session-Id:\\s*([A-Za-z0-9._:-]+)\\s*$',
+  '(?i)^Autobot-Session-Id:\\s*([A-Za-z0-9._:-]+)\\s*$',
+]
 
 [repos.quality]
 run_tests_before_commit = false

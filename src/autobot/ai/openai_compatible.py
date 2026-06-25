@@ -24,5 +24,6 @@ class OpenAICompatibleProvider(AIProvider):
         context: dict[str, Any],
         budget: AIBudget,
         tools_policy: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AIResult:
         raise NotImplementedError("OpenAI-compatible provider is planned but not implemented")

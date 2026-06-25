@@ -72,6 +72,71 @@ A future `autobot service install` command may automate this with confirmation a
 
 This VM's rollout uses an installed and enabled `/etc/systemd/system/autobot.service` that runs `autobot serve` behind Apache.
 
+## Local web dashboard
+
+`autobot web` starts a local React SPA dashboard for inspecting `autobot` state.
+
+Defaults:
+
+- Binds to `127.0.0.1:9091`.
+- Requires an access token.
+- Is read-only unless actions are explicitly enabled.
+- Serves packaged static assets, so Node is not required at runtime.
+
+Config:
+
+```toml
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 9091
+token = { env = "AUTOBOT_WEB_TOKEN", default = "" }
+read_only = true
+enable_actions = false
+open_browser = false
+```
+
+Run locally:
+
+```bash
+autobot web --config ~/.config/autobot/autobot.toml
+```
+
+If no token is configured, `autobot web` prints a random tokenized URL. The dashboard shows deliveries, events, jobs, runs, child PRs, PR stats, artifacts, GitHub hook IP ranges, and redacted effective config.
+
+Mutating dashboard actions such as requeue/replay/cancel are intentionally disabled by default and require `--enable-actions` plus future action endpoint support.
+
+### Dashboard access from a VM
+
+For a remote VM, the safest option is SSH port forwarding. Keep `autobot web` bound to `127.0.0.1` on the VM:
+
+```bash
+autobot web --config ~/.config/autobot/autobot.toml
+```
+
+Then from your local machine:
+
+```bash
+ssh -L 9091:127.0.0.1:9091 root@24.199.89.101
+```
+
+Open `http://127.0.0.1:9091` locally and enter the token printed by `autobot web`.
+
+If you intentionally want to expose the dashboard on the VM network interface, bind publicly:
+
+```bash
+autobot web --config ~/.config/autobot/autobot.toml --host-public --port 9091
+```
+
+`--host-public` is equivalent to `--host 0.0.0.0`. You must allow the chosen TCP port in the cloud firewall. Token protection still applies, and the dashboard remains read-only unless actions are explicitly enabled.
+
+When using `--host-public`, `autobot` logs the bind address and also prints browser-friendly tokenized URLs for detected VM IP addresses, for example:
+
+```text
+autobot dashboard bound to http://0.0.0.0:9091
+autobot dashboard URL: http://24.199.89.101:9091/?token=...
+```
+
 ## GitHub App installation
 
 `autobot` receives GitHub events through a GitHub App webhook. For organization repositories, prefer creating or installing a GitHub App that the organization can actually authorize.
@@ -288,3 +353,53 @@ autobot render 'hello {{name:-world}}'
 ```
 
 `autobot serve` runs the always-on HTTP daemon. `doctor` validates config and dependencies.
+
+## AI session discovery
+
+`autobot` can optionally scan recent git commit messages for AI session IDs and pass the best candidate back to a provider that supports session reuse. This is useful when a branch already contains AI-generated commits and the next handler run should reconnect to the same AI session for better context.
+
+This feature is disabled by default. Repos must opt in with explicit regex patterns and/or heuristic scanning.
+
+Example config:
+
+```toml
+[defaults.ai.session_discovery]
+enabled = false
+git_log_limit = 100
+scan_subject = true
+scan_body = true
+heuristics_enabled = false
+patterns = []
+
+[ai.providers.copilot.session_reuse]
+enabled = true
+connect_arg_template = "--connect={{session_id}}"
+fallback = "new_session"
+
+[[repos]]
+key = "ORG_OR_USER/REPO"
+
+[repos.ai.session_discovery]
+enabled = true
+git_log_limit = 50
+heuristics_enabled = true
+patterns = [
+  '(?i)^Copilot-Session-Id:\\s*([A-Za-z0-9._:-]+)\\s*$',
+  '(?i)^Autobot-Session-Id:\\s*([A-Za-z0-9._:-]+)\\s*$',
+]
+```
+
+Recommended explicit commit trailers:
+
+```text
+Copilot-Session-Id: <session-id>
+Autobot-Session-Id: <session-id>
+```
+
+Security notes:
+
+- Commit messages are untrusted input.
+- Regex patterns must contain exactly one capture group.
+- Heuristic scanning is opt-in.
+- Session IDs are passed as argv list elements, never through shell interpolation.
+- If reconnect fails, providers should fall back to a new session according to config.

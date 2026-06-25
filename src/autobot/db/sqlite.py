@@ -142,6 +142,31 @@ CREATE TABLE IF NOT EXISTS provider_ip_range_changes (
   detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   acknowledged_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ai_session_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  repo_key TEXT NOT NULL,
+  branch TEXT,
+  commit_sha TEXT,
+  session_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  confidence INTEGER NOT NULL,
+  matched_pattern TEXT,
+  discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_session_uses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT,
+  provider TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  connect_attempted INTEGER NOT NULL DEFAULT 0,
+  connect_succeeded INTEGER NOT NULL DEFAULT 0,
+  fallback_used INTEGER NOT NULL DEFAULT 0,
+  result_summary TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -541,6 +566,127 @@ class StateStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def list_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, provider, delivery_id, event_name, event_action,
+                       signature_status, payload_path, received_at, dedupe_status
+                FROM deliveries
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, provider, delivery_id, resource_key, envelope_json,
+                       routing_status, created_at
+                FROM events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["envelope"] = json.loads(str(item.pop("envelope_json")))
+                result.append(item)
+            return result
+
+    def list_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, resource_key, handler_id, status, not_before, attempts,
+                       latest_delivery_id, latest_event_json, created_at, updated_at
+                FROM jobs
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                latest = item.pop("latest_event_json")
+                item["latest_event"] = json.loads(str(latest)) if latest else None
+                result.append(item)
+            return result
+
+    def list_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, job_id, status, ai_provider, ai_model, prompt_hash,
+                       token_estimate, cost_estimate, result_summary, created_at
+                FROM runs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_child_prs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, provider, repo_key, parent_pr_number, parent_head_branch,
+                       child_branch, child_pr_number, child_pr_url, state,
+                       cleanup_status, created_at, updated_at
+                FROM child_prs
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_pull_requests(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, provider, repo_key, pr_number, author, head_branch,
+                       base_branch, latest_sha, state, metadata_json, updated_at
+                FROM pull_requests
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                metadata = item.pop("metadata_json")
+                item["metadata"] = json.loads(str(metadata)) if metadata else None
+                result.append(item)
+            return result
+
+    def list_artifacts(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, job_id, kind, path, metadata_json, created_at
+                FROM artifacts
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                metadata = item.pop("metadata_json")
+                item["metadata"] = json.loads(str(metadata)) if metadata else None
+                result.append(item)
+            return result
+
     def get_provider_ip_ranges(
         self,
         *,
@@ -650,3 +796,88 @@ class StateStore:
                 item["removed"] = json.loads(str(item.pop("removed_json")))
                 result.append(item)
             return result
+
+    def record_ai_session_candidate(
+        self,
+        *,
+        provider: str,
+        repo_key: str,
+        branch: str | None,
+        commit_sha: str | None,
+        session_id: str,
+        source: str,
+        confidence: int,
+        matched_pattern: str | None,
+    ) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO ai_session_candidates (
+                  provider, repo_key, branch, commit_sha, session_id,
+                  source, confidence, matched_pattern
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider,
+                    repo_key,
+                    branch,
+                    commit_sha,
+                    session_id,
+                    source,
+                    confidence,
+                    matched_pattern,
+                ),
+            )
+
+    def record_ai_session_use(
+        self,
+        *,
+        provider: str,
+        session_id: str,
+        job_id: str | None = None,
+        connect_attempted: bool = False,
+        connect_succeeded: bool = False,
+        fallback_used: bool = False,
+        result_summary: str | None = None,
+    ) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO ai_session_uses (
+                  job_id, provider, session_id, connect_attempted,
+                  connect_succeeded, fallback_used, result_summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    provider,
+                    session_id,
+                    int(connect_attempted),
+                    int(connect_succeeded),
+                    int(fallback_used),
+                    result_summary,
+                ),
+            )
+
+    def latest_ai_session_candidates(
+        self,
+        *,
+        provider: str | None = None,
+        repo_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT provider, repo_key, branch, commit_sha, session_id, source,
+                   confidence, matched_pattern, discovered_at
+            FROM ai_session_candidates
+            WHERE (? IS NULL OR provider = ?)
+              AND (? IS NULL OR repo_key = ?)
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        with self.connect() as con:
+            rows = con.execute(
+                query,
+                (provider, provider, repo_key, repo_key, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]

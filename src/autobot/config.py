@@ -123,6 +123,15 @@ def default_config() -> dict[str, Any]:
             "health_path": "/healthz",
             "readiness_path": "/readyz",
         },
+        "web": {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": 9091,
+            "token": {"env": "AUTOBOT_WEB_TOKEN", "default": ""},
+            "read_only": True,
+            "enable_actions": False,
+            "open_browser": False,
+        },
         "queue": {
             "backend": "redis",
             "url": {"env": "AUTOBOT_QUEUE_URL", "default": "redis://127.0.0.1:6379/0"},

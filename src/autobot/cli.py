@@ -14,6 +14,7 @@ from .queue.redis_queue import RedisQuietWindowQueue
 from .server import serve
 from .stats import print_stats
 from .templates import render_template
+from .web import web
 from .workflows.engine import run_job
 
 
@@ -55,6 +56,24 @@ def cmd_render(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     serve(config)
+    return 0
+
+
+def cmd_web(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    token = args.token
+    if not token:
+        token_ref = config.data.get("web", {}).get("token")
+        if token_ref:
+            resolved = config.secret_resolver.resolve(token_ref, name="web.token")
+            token = resolved or None
+    web(
+        config,
+        host="0.0.0.0" if args.host_public else args.host,
+        port=args.port,
+        token=token,
+        enable_actions=args.enable_actions,
+    )
     return 0
 
 
@@ -124,6 +143,15 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = sub.add_parser("serve", help="Run the webhook HTTP daemon")
     _add_config_arg(serve_parser)
     serve_parser.set_defaults(func=cmd_serve)
+
+    web_parser = sub.add_parser("web", help="Run the local React dashboard")
+    _add_config_arg(web_parser)
+    web_parser.add_argument("--host", help="Bind host, defaults to web.host")
+    web_parser.add_argument("--host-public", action="store_true", help="Bind to 0.0.0.0 for VM/LAN access")
+    web_parser.add_argument("--port", type=int, help="Bind port, defaults to web.port")
+    web_parser.add_argument("--token", help="Access token. If omitted, a random token is printed.")
+    web_parser.add_argument("--enable-actions", action="store_true", help="Enable mutating dashboard actions")
+    web_parser.set_defaults(func=cmd_web)
 
     doctor = sub.add_parser("doctor", help="Validate local config and dependencies")
     _add_config_arg(doctor)
